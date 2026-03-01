@@ -1,0 +1,416 @@
+{
+  "name": "Telegram AI Bot v3 - Sheets Memory & Voice",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tg-ai-bot-v3",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "n-webhook",
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 400],
+      "webhookId": "tg-ai-bot-v3-wh"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst message = body.message || body.edited_message;\n\nif (!message) return [{ json: { skip: true } }];\n\nconst chatId   = String(message.chat.id);\nconst userId   = message.from?.id;\nconst username = message.from?.username || message.from?.first_name || 'User';\nconst text     = message.text || '';\nconst isVoice  = !!message.voice;\nconst isStart  = text.trim() === '/start';\nconst voiceFileId = isVoice ? message.voice.file_id : null;\n\nif (!text && !isVoice) return [{ json: { skip: true } }];\n\nreturn [{\n  json: { chatId, userId, username, text, isVoice, isStart, voiceFileId, skip: false }\n}];"
+      },
+      "id": "n-parse",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [380, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [{ "id": "c-skip", "leftValue": "={{ $json.skip }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "n-skip",
+      "name": "Skip Empty?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [580, 400]
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "{ \"ok\": true }", "options": {} },
+      "id": "n-resp-skip",
+      "name": "Response (skip)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [780, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [{ "id": "c-start", "leftValue": "={{ $json.isStart }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "n-is-start",
+      "name": "Is /start?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [780, 460]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "👋 <b>Привет, {{ $json.username }}!</b>\n\nЯ — твой умный AI-ассистент:\n\n🌐 <b>Ищу в интернете</b> — актуальные данные\n🧠 <b>Постоянная память</b> — помню всё в Google Sheets\n🎙️ <b>Голосовые сообщения</b> — говори, отвечу текстом\n\n💬 Напиши или надиктуй вопрос!",
+        "additionalFields": { "parse_mode": "HTML" }
+      },
+      "id": "n-welcome",
+      "name": "Send Welcome",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [980, 280],
+      "credentials": { "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "{ \"ok\": true }", "options": {} },
+      "id": "n-resp-welcome",
+      "name": "Response (welcome)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1180, 280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [{ "id": "c-voice", "leftValue": "={{ $json.isVoice }}", "rightValue": true, "operator": { "type": "boolean", "operation": "equals" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "n-is-voice",
+      "name": "Is Voice?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [980, 540]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getFile",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "file_id", "value": "={{ $json.voiceFileId }}" }] },
+        "options": {}
+      },
+      "id": "n-get-file",
+      "name": "Get File Info",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1180, 420]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.result.file_path }}",
+        "options": { "response": { "response": { "responseFormat": "file" } } }
+      },
+      "id": "n-download",
+      "name": "Download Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 420]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $env.OPENAI_API_KEY }}" }] },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "file", "value": "={{ $binary.data }}", "parameterType": "formBinaryData" },
+            { "name": "model", "value": "whisper-1" },
+            { "name": "language", "value": "ru" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n-whisper",
+      "name": "Whisper Transcribe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1580, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "sv1", "name": "chatId",     "value": "={{ $('Parse Message').item.json.chatId }}",    "type": "string" },
+            { "id": "sv2", "name": "username",   "value": "={{ $('Parse Message').item.json.username }}",  "type": "string" },
+            { "id": "sv3", "name": "chatInput",  "value": "={{ $json.text }}",                             "type": "string" },
+            { "id": "sv4", "name": "isVoice",    "value": true,                                            "type": "boolean" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n-set-voice",
+      "name": "Set Voice Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1780, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "st1", "name": "chatId",     "value": "={{ $json.chatId }}",   "type": "string" },
+            { "id": "st2", "name": "username",   "value": "={{ $json.username }}", "type": "string" },
+            { "id": "st3", "name": "chatInput",  "value": "={{ $json.text }}",     "type": "string" },
+            { "id": "st4", "name": "isVoice",    "value": false,                   "type": "boolean" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n-set-text",
+      "name": "Set Text Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1180, 660]
+    },
+    {
+      "parameters": {
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName":  { "__rl": true, "value": "ChatHistory",          "mode": "name" },
+        "filtersUI":  { "values": [] },
+        "options":    { "returnAllMatches": true }
+      },
+      "id": "n-read-sheets",
+      "name": "Read History (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [2000, 540],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get chatId and question from whichever branch was active\nlet chatId = '', userQuestion = '', username = '', isVoice = false;\ntry { chatId     = $('Set Voice Data').item.json.chatId;    } catch(e) {}\ntry { chatId     = chatId     || $('Set Text Data').item.json.chatId;    } catch(e) {}\ntry { userQuestion = $('Set Voice Data').item.json.chatInput;  } catch(e) {}\ntry { userQuestion = userQuestion || $('Set Text Data').item.json.chatInput; } catch(e) {}\ntry { username   = $('Set Voice Data').item.json.username;  } catch(e) {}\ntry { username   = username   || $('Set Text Data').item.json.username;  } catch(e) {}\ntry { isVoice    = $('Set Voice Data').item.json.isVoice;  } catch(e) {}\n\n// Get all rows from Sheets\nconst allRows = $input.all().map(i => i.json);\n\n// Filter by chatId, keep last 15 exchanges\nconst userRows = allRows\n  .filter(r => String(r.chatId) === String(chatId) && r.userMessage && r.assistantMessage)\n  .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))\n  .slice(-15);\n\n// Build messages array for Claude API\nconst historyMessages = [];\nuserRows.forEach(row => {\n  historyMessages.push({ role: 'user',      content: String(row.userMessage) });\n  historyMessages.push({ role: 'assistant', content: String(row.assistantMessage) });\n});\n\nreturn [{ json: { chatId, userQuestion, username, isVoice, historyMessages } }];"
+      },
+      "id": "n-filter-history",
+      "name": "Filter History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 540]
+    },
+    {
+      "parameters": {
+        "url": "https://api.tavily.com/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "api_key": "={{ $env.TAVILY_API_KEY }}",
+          "query": "={{ $json.userQuestion }}",
+          "search_depth": "advanced",
+          "include_answer": true,
+          "include_raw_content": false,
+          "max_results": 5
+        },
+        "options": {}
+      },
+      "id": "n-tavily",
+      "name": "Tavily Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 540]
+    },
+    {
+      "parameters": {
+        "jsCode": "// All context from previous nodes\nconst filterData  = $('Filter History').item.json;\nconst searchData  = $input.first().json;\n\nconst { chatId, userQuestion, username, isVoice, historyMessages } = filterData;\n\n// Build search context for system prompt\nlet searchContext = '';\nif (searchData.answer) {\n  searchContext += `Краткий ответ из поиска: ${searchData.answer}\\n\\n`;\n}\nif (searchData.results?.length > 0) {\n  searchContext += 'Источники из интернета:\\n';\n  searchData.results.slice(0, 5).forEach((r, i) => {\n    const content = r.content ? r.content.substring(0, 450) : '';\n    searchContext += `\\n[${i+1}] ${r.title}\\nURL: ${r.url}\\n${content}\\n`;\n  });\n}\n\nconst systemMsg = `Ты — умный AI-ассистент в Telegram. Отвечаешь точно, чётко и полезно.\n\nПравила:\n- Отвечай на языке вопроса\n- Используй данные из поиска для актуальных фактов\n- Telegram Markdown: *жирный*, _курсив_, \\`код\\`, [текст](url)\n- Максимум 3000 символов в ответе\n- В конце укажи 1-2 источника если использовал поиск\n- Помни весь контекст разговора из истории${isVoice ? '\\n- Сообщение пришло голосом, текст был расшифрован' : ''}\n${ searchContext ? `\\n\\n=== АКТУАЛЬНЫЕ ДАННЫЕ ИЗ ИНТЕРНЕТА ===\\n${searchContext}=== КОНЕЦ ДАННЫХ ===` : '' }`;\n\n// Full messages array: history + current question\nconst messages = [\n  ...historyMessages,\n  { role: 'user', content: userQuestion }\n];\n\nreturn [{\n  json: {\n    chatId,\n    userQuestion,\n    username,\n    requestBody: {\n      model: 'claude-sonnet-4-6',\n      max_tokens: 2048,\n      temperature: 0.3,\n      system: systemMsg,\n      messages\n    }\n  }\n}];"
+      },
+      "id": "n-build-request",
+      "name": "Build Claude Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2600, 540]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "action": "typing",
+        "additionalFields": {}
+      },
+      "id": "n-typing",
+      "name": "Send Typing...",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2800, 540],
+      "credentials": { "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key",          "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version",   "value": "2023-06-01" },
+            { "name": "content-type",        "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($('Build Claude Request').item.json.requestBody) }}",
+        "options": {}
+      },
+      "id": "n-claude-api",
+      "name": "Call Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 540]
+    },
+    {
+      "parameters": {
+        "jsCode": "const claudeResp   = $input.first().json;\nconst buildData    = $('Build Claude Request').item.json;\n\n// Extract answer text\nlet answer = '';\nif (claudeResp.content?.length > 0) {\n  answer = claudeResp.content.map(c => c.text || '').join('');\n} else if (claudeResp.error) {\n  answer = `⚠️ Ошибка API: ${claudeResp.error.message}`;\n} else {\n  answer = 'Не удалось получить ответ. Попробуй ещё раз.';\n}\n\n// Telegram limit 4096 chars\nif (answer.length > 3800) {\n  answer = answer.substring(0, 3800) + '...\\n_[сокращено]_';\n}\n\nreturn [{\n  json: {\n    chatId:       buildData.chatId,\n    userQuestion: buildData.userQuestion,\n    answer\n  }\n}];"
+      },
+      "id": "n-format",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3200, 540]
+    },
+    {
+      "parameters": {
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName":  { "__rl": true, "value": "ChatHistory",          "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatId":            "={{ $json.chatId }}",
+            "timestamp":         "={{ $now.toISO() }}",
+            "userMessage":       "={{ $json.userQuestion }}",
+            "assistantMessage":  "={{ $json.answer }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "chatId",           "displayName": "chatId",           "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "timestamp",        "displayName": "timestamp",        "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "userMessage",      "displayName": "userMessage",      "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "assistantMessage", "displayName": "assistantMessage", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n-save-sheets",
+      "name": "Save to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [3400, 540],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "GOOGLE_CRED_ID", "name": "Google Sheets" } }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Format Response').item.json.chatId }}",
+        "text":   "={{ $('Format Response').item.json.answer }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "id": "n-send",
+      "name": "Send Answer",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3600, 540],
+      "credentials": { "telegramApi": { "id": "TELEGRAM_CRED_ID", "name": "Telegram Bot" } }
+    },
+    {
+      "parameters": { "respondWith": "json", "responseBody": "{ \"ok\": true }", "options": {} },
+      "id": "n-resp-final",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3800, 540]
+    }
+  ],
+  "connections": {
+    "Telegram Webhook": {
+      "main": [[{ "node": "Parse Message", "type": "main", "index": 0 }]]
+    },
+    "Parse Message": {
+      "main": [[{ "node": "Skip Empty?", "type": "main", "index": 0 }]]
+    },
+    "Skip Empty?": {
+      "main": [
+        [{ "node": "Response (skip)", "type": "main", "index": 0 }],
+        [{ "node": "Is /start?",      "type": "main", "index": 0 }]
+      ]
+    },
+    "Is /start?": {
+      "main": [
+        [{ "node": "Send Welcome",    "type": "main", "index": 0 }],
+        [{ "node": "Is Voice?",       "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Welcome": {
+      "main": [[{ "node": "Response (welcome)", "type": "main", "index": 0 }]]
+    },
+    "Is Voice?": {
+      "main": [
+        [{ "node": "Get File Info",   "type": "main", "index": 0 }],
+        [{ "node": "Set Text Data",   "type": "main", "index": 0 }]
+      ]
+    },
+    "Get File Info": {
+      "main": [[{ "node": "Download Audio",    "type": "main", "index": 0 }]]
+    },
+    "Download Audio": {
+      "main": [[{ "node": "Whisper Transcribe","type": "main", "index": 0 }]]
+    },
+    "Whisper Transcribe": {
+      "main": [[{ "node": "Set Voice Data",    "type": "main", "index": 0 }]]
+    },
+    "Set Voice Data": {
+      "main": [[{ "node": "Read History (Sheets)", "type": "main", "index": 0 }]]
+    },
+    "Set Text Data": {
+      "main": [[{ "node": "Read History (Sheets)", "type": "main", "index": 0 }]]
+    },
+    "Read History (Sheets)": {
+      "main": [[{ "node": "Filter History", "type": "main", "index": 0 }]]
+    },
+    "Filter History": {
+      "main": [[{ "node": "Tavily Web Search", "type": "main", "index": 0 }]]
+    },
+    "Tavily Web Search": {
+      "main": [[{ "node": "Build Claude Request", "type": "main", "index": 0 }]]
+    },
+    "Build Claude Request": {
+      "main": [[{ "node": "Send Typing...", "type": "main", "index": 0 }]]
+    },
+    "Send Typing...": {
+      "main": [[{ "node": "Call Claude API", "type": "main", "index": 0 }]]
+    },
+    "Call Claude API": {
+      "main": [[{ "node": "Format Response", "type": "main", "index": 0 }]]
+    },
+    "Format Response": {
+      "main": [[{ "node": "Save to Google Sheets", "type": "main", "index": 0 }]]
+    },
+    "Save to Google Sheets": {
+      "main": [[{ "node": "Send Answer", "type": "main", "index": 0 }]]
+    },
+    "Send Answer": {
+      "main": [[{ "node": "Webhook Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [],
+  "versionId": "3"
+}
